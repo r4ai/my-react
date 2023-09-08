@@ -78,10 +78,29 @@ type Fiber = {
   sibling?: Fiber | undefined;
 } & MyReactElement;
 
+let wipRoot: Fiber | undefined = undefined;
 let nextUnitOfWork: Fiber | undefined = undefined;
 
+const commitRoot = () => {
+  if (!wipRoot || !wipRoot?.child) {
+    throw new Error("no wipRoot or child");
+  }
+
+  commitWork(wipRoot.child);
+  wipRoot = undefined;
+};
+
+const commitWork = (fiber: Fiber | undefined) => {
+  if (!fiber) return;
+
+  const domParent = fiber.parent?.dom;
+  domParent?.appendChild(fiber.dom!);
+  commitWork(fiber.child);
+  commitWork(fiber.sibling);
+};
+
 export const render = (element: MyReactElement, container: HTMLElement) => {
-  nextUnitOfWork = {
+  wipRoot = {
     kind: "node",
     type: element.type,
     dom: container,
@@ -89,6 +108,7 @@ export const render = (element: MyReactElement, container: HTMLElement) => {
       children: [element],
     },
   };
+  nextUnitOfWork = wipRoot;
 };
 
 const workLoop: IdleRequestCallback = (deadline) => {
@@ -109,8 +129,6 @@ const performUnitOfWork = (fiber: Fiber) => {
   if (!fiber.dom) {
     fiber.dom = createDom(fiber);
   }
-
-  fiber.parent?.dom?.appendChild(fiber.dom);
 
   // create new fibers
   const elements = fiber.props.children;
