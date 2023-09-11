@@ -234,7 +234,9 @@ const performUnitOfWork = (fiber: Fiber) => {
 type MyRectFC = (props: NodeElement["props"]) => MyReactElement;
 
 const updateFunctionComponent = (fiber: Fiber) => {
-  const children = [(fiber.type as unknown as MyRectFC)(fiber.props)];
+  const children = [
+    (fiber.type as unknown as MyRectFC)(fiber.props.children[0].props),
+  ];
   reconcileChildren(fiber, children);
 };
 
