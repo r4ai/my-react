@@ -4,7 +4,7 @@ type ElementKind = "text" | "node";
 
 type Element = {
   kind: ElementKind;
-  type: string;
+  type: string | Function;
   props: {
     [key in string]: unknown;
   };
@@ -61,12 +61,7 @@ const createDom = (fiber: Fiber) => {
       ? document.createTextNode(fiber.props.nodeValue)
       : document.createElement(fiber.type);
 
-  Object.keys(fiber.props)
-    .filter((key) => key !== "children")
-    .forEach((name) => {
-      // @ts-ignore: this is safe because name is a key of props
-      dom[name] = fiber.props[name];
-    });
+  updateDom(dom, { children: [] }, fiber.props);
 
   return dom;
 };
@@ -146,15 +141,22 @@ const updateDom = (
 const commitRoot = (root: Fiber) => {
   deletions?.forEach(commitWork);
   commitWork(root.child);
+  currentRoot = wipRoot;
   wipRoot = undefined;
 };
 
 const commitWork = (fiber: Fiber | undefined) => {
-  if (!fiber || !fiber.parent || !fiber.dom) return;
+  if (!fiber) return;
 
-  const domParent = fiber.parent.dom;
+  let domParentFiber = fiber.parent;
+  while (!domParentFiber?.dom && domParentFiber?.parent) {
+    domParentFiber = domParentFiber.parent;
+  }
+  const domParent = domParentFiber?.dom;
+  if (!domParent) throw new Error("failed to find dom parent");
+
   if (fiber.effectTag === "PLACEMENT" && fiber.dom != undefined) {
-    domParent?.appendChild(fiber.dom);
+    domParent.appendChild(fiber.dom);
   } else if (
     fiber.effectTag === "UPDATE" &&
     fiber.dom != undefined &&
@@ -162,10 +164,19 @@ const commitWork = (fiber: Fiber | undefined) => {
   ) {
     updateDom(fiber.dom, fiber.alternate.props, fiber.props);
   } else if (fiber.effectTag === "DELETION") {
-    domParent?.removeChild(fiber.dom);
+    commitDeletion(fiber, domParent);
+    console.log("deletion");
   }
   commitWork(fiber.child);
   commitWork(fiber.sibling);
+};
+
+const commitDeletion = (fiber: Fiber, domParent: HTMLElement | Text) => {
+  if (fiber.dom) {
+    domParent.removeChild(fiber.dom);
+  } else {
+    commitDeletion(fiber.child!, domParent);
+  }
 };
 
 export const render = (element: MyReactElement, container: HTMLElement) => {
@@ -200,14 +211,12 @@ const workLoop: IdleRequestCallback = (deadline) => {
 requestIdleCallback(workLoop);
 
 const performUnitOfWork = (fiber: Fiber) => {
-  // add dom node
-  if (!fiber.dom) {
-    fiber.dom = createDom(fiber);
+  const isFunctionComponent = typeof fiber.type === "function";
+  if (isFunctionComponent) {
+    updateFunctionComponent(fiber);
+  } else {
+    updateHostComponent(fiber);
   }
-
-  // create new fibers
-  const elements = fiber.props.children;
-  reconcileChildren(fiber, elements);
 
   // search for next unit of work
   if (fiber.child) {
@@ -222,6 +231,21 @@ const performUnitOfWork = (fiber: Fiber) => {
   }
 };
 
+type MyRectFC = (props: NodeElement["props"]) => MyReactElement;
+
+const updateFunctionComponent = (fiber: Fiber) => {
+  const children = [(fiber.type as unknown as MyRectFC)(fiber.props)];
+  reconcileChildren(fiber, children);
+};
+
+const updateHostComponent = (fiber: Fiber) => {
+  if (!fiber.dom) {
+    fiber.dom = createDom(fiber);
+  }
+
+  reconcileChildren(fiber, fiber.props.children);
+};
+
 const createFiber = (
   oldFiber: Fiber | undefined,
   wipFiber: Fiber,
@@ -232,10 +256,7 @@ const createFiber = (
     ? {
         kind: "text",
         type: "TEXT_ELEMENT",
-        props:
-          effectTag === "UPDATE" && oldFiber
-            ? (oldFiber.props as TextElement["props"])
-            : (element.props as TextElement["props"]),
+        props: element.props,
         dom: oldFiber?.dom,
         parent: wipFiber,
         alternate: oldFiber,
@@ -244,8 +265,7 @@ const createFiber = (
     : {
         kind: "node",
         type: effectTag === "UPDATE" && oldFiber ? oldFiber.type : element.type,
-        props:
-          effectTag === "UPDATE" && oldFiber ? oldFiber.props : element.props,
+        props: element.props,
         dom: oldFiber?.dom,
         parent: wipFiber,
         alternate: oldFiber,
