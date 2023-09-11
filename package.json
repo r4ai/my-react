@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --port 5174",
     "test": "vitest"
   },
   "devDependencies": {
