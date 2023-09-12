@@ -39,7 +39,7 @@ export const createElement = (
   props: {
     ...props,
     children: children.map((child) =>
-      typeof child === "string" ? createTextElement(child) : child
+      typeof child !== "object" ? createTextElement(child) : child
     ),
   },
 });
@@ -52,6 +52,52 @@ export const createTextElement = (text: string): TextElement => ({
     children: [],
   },
 });
+
+// Hooks
+
+export const useState = <T>(
+  initial: T
+): [T, (action: StateAction<T>) => void] => {
+  const oldHook = wipFiber?.alternate?.hooks?.[hookIndex] as
+    | Hook<T>
+    | undefined;
+  const hook: Hook<T> = {
+    state: oldHook ? oldHook.state : initial,
+    queue: [],
+  };
+
+  const actions = oldHook ? oldHook.queue : [];
+  actions.forEach((action) => {
+    hook.state = action(hook.state);
+  });
+
+  const setState = (action: StateAction<T>) => {
+    hook.queue.push(action);
+    if (!currentRoot) throw new Error("currentRoot is undefined");
+    wipRoot =
+      currentRoot.kind === "node"
+        ? {
+            kind: "node",
+            type: currentRoot.type,
+            dom: currentRoot.dom,
+            props: currentRoot.props,
+            alternate: currentRoot,
+          }
+        : {
+            kind: "text",
+            type: "TEXT_ELEMENT",
+            dom: currentRoot.dom,
+            props: currentRoot.props,
+            alternate: currentRoot,
+          };
+    nextUnitOfWork = wipRoot;
+    deletions = [];
+  };
+
+  wipFiber?.hooks?.push(hook as Hook);
+  hookIndex++;
+  return [hook.state, setState];
+};
 
 // Rendering
 
@@ -66,7 +112,9 @@ const createDom = (fiber: Fiber) => {
   return dom;
 };
 
+type StateAction<T> = (prev: T) => T;
 type EffectTag = "PLACEMENT" | "UPDATE" | "DELETION";
+type Hook<T = unknown> = { state: T; queue: StateAction<T>[] };
 type Fiber = {
   dom: HTMLElement | Text | undefined;
   child?: Fiber | undefined;
@@ -74,6 +122,7 @@ type Fiber = {
   sibling?: Fiber | undefined;
   alternate: Fiber | undefined; // 前のcommit faseでDOMにcommitした古いfiber
   effectTag?: EffectTag;
+  hooks?: Hook[];
 } & MyReactElement;
 
 let currentRoot: Fiber | undefined = undefined; // 最後にrenderされたroot fiber
@@ -233,7 +282,13 @@ const performUnitOfWork = (fiber: Fiber) => {
 
 type MyRectFC = (props: NodeElement["props"]) => MyReactElement;
 
+let wipFiber: Fiber | undefined = undefined;
+let hookIndex = 0;
+
 const updateFunctionComponent = (fiber: Fiber) => {
+  wipFiber = fiber;
+  hookIndex = 0;
+  wipFiber.hooks = [];
   const children = [
     (fiber.type as unknown as MyRectFC)(fiber.props.children[0].props),
   ];
@@ -324,4 +379,5 @@ export default {
   createElement,
   createTextElement,
   render,
+  useState,
 };
